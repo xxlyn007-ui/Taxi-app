@@ -72,6 +72,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "2fda5086-7022-4242-8103-88b39f8f3a54"
+      }
+    },
+    "owner": "taxiap"
   }
 }
