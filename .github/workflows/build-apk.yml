@@ -1,35 +1,57 @@
-name: EAS Build APK
+name: Build APK
+
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check for EXPO_TOKEN
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "You must provide an EXPO_TOKEN secret linked to this project's Expo account in this repo's secrets. Learn more: https://docs.expo.dev/eas-update/github-actions"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 20.x
-      - run: npm install --legacy-peer-deps
-      - uses: expo/expo-github-action@v8
+          cache: npm
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
-      - run: eas init --non-interactive --force
-      - name: EAS Build
-        id: easbuild
-        continue-on-error: true
-        run: eas build --platform android --profile preview --non-interactive --json > build-result.json
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build APK
+        run: eas build --platform android --profile preview --non-interactive --wait --json > eas-build-output.json
+
       - name: Show build result
-        run: cat build-result.json || true
+        run: cat eas-build-output.json
+
       - name: Extract build ID and fetch logs
+        if: always()
         run: |
-          BUILD_ID=$(node -e "try{const j=JSON.parse(require('fs').readFileSync('build-result.json','utf8'));console.log(Array.isArray(j)?j[0].id:j.id)}catch(e){console.log('')}")
-          echo "Build ID: $BUILD_ID"
+          BUILD_ID=$(node -e "try{const d=JSON.parse(require('fs').readFileSync('eas-build-output.json','utf8'));console.log(Array.isArray(d)?d[0].id:d.id)}catch(e){console.log('')}")
+          echo "BUILD_ID=$BUILD_ID"
           if [ -n "$BUILD_ID" ]; then
-            eas build:view "$BUILD_ID" --json || true
+            eas build:view "$BUILD_ID" --json > build-details.json || true
+            cat build-details.json || true
           fi
+
       - name: Fail job if build failed
-        if: steps.easbuild.outcome == 'failure'
-        run: exit 1
+        run: |
+          STATUS=$(node -e "try{const d=JSON.parse(require('fs').readFileSync('eas-build-output.json','utf8'));console.log(Array.isArray(d)?d[0].status:d.status)}catch(e){console.log('unknown')}")
+          echo "Build status: $STATUS"
+          if [ "$STATUS" != "finished" ]; then
+            exit 1
+          fi
