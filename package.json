@@ -6,7 +6,8 @@
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "postinstall": "node -e \"const fs=require('fs');const path=require('path');console.log('NODE',process.version);try{const p=require.resolve('expo-router/package.json');console.log('RESOLVED expo-router/package.json ->',p);}catch(e){console.log('RESOLVE FAIL expo-router/package.json:',e.message);}try{const p2=require.resolve('expo-router/app.plugin.js');console.log('RESOLVED app.plugin.js ->',p2);}catch(e){console.log('RESOLVE FAIL app.plugin.js:',e.message);}const dir='node_modules/expo-router';console.log('EXISTS dir:',fs.existsSync(dir));if(fs.existsSync(dir)){console.log('LISTING:',fs.readdirSync(dir).slice(0,20).join(','));const pj=JSON.parse(fs.readFileSync(path.join(dir,'package.json'),'utf8'));console.log('VERSION:',pj.version);console.log('EXPORTS:',JSON.stringify(pj.exports).slice(0,500));console.log('MAIN:',pj.main);}\""
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
