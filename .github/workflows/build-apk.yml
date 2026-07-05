@@ -29,8 +29,29 @@ jobs:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: |
+          set -e
+          for attempt in 1 2 3; do
+            echo "Install attempt $attempt"
+            rm -rf node_modules
+            if npm install --legacy-peer-deps --no-audit --no-fund; then
+              if [ -d node_modules/expo-router ] && [ -f node_modules/expo-router/app.plugin.js ]; then
+                echo "Install verified OK"
+                exit 0
+              else
+                echo "node_modules/expo-router missing or incomplete after install, retrying..."
+              fi
+            else
+              echo "npm install failed, retrying..."
+            fi
+            sleep 5
+          done
+          echo "All install attempts failed"
+          exit 1
 
       - name: Build APK
         run: eas build --platform android --profile preview --non-interactive --wait --json > eas-build-output.json
