@@ -1,0 +1,77 @@
+{
+  "expo": {
+    "name": "Taxi Impulse",
+    "slug": "taxi-impulse-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "taxi-impulse-mobile",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#19063e"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "ru.taxiimpulse.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Приложение использует геолокацию для определения вашего местоположения при заказе такси.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Приложение использует геолокацию для определения вашего местоположения при заказе такси."
+      }
+    },
+    "android": {
+      "package": "ru.taxiimpulse.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#19063e"
+      },
+      "permissions": [
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/images/icon.png"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "origin": "https://replit.com/"
+        }
+      ],
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#7c3aed",
+          "sounds": [
+            "./assets/notification.mp3"
+          ]
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Taxi Impulse использует геолокацию, чтобы передавать ваше местоположение пассажирам, пока вы на линии — даже когда приложение свёрнуто.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      "./plugins/withFloatingBubble.js"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
