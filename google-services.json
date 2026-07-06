@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "19324678062",
+    "project_id": "taxi-impulse",
+    "storage_bucket": "taxi-impulse.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:19324678062:android:33ce9a1dccc0b0d477e23f",
+        "android_client_info": {
+          "package_name": "Com.companytaxiapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNNeX3vJLkAbmm4aIiDy0D8tPSWPF_ldU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:19324678062:android:a5736c2e0576062177e23f",
+        "android_client_info": {
+          "package_name": "ru.taxiimpulse.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNNeX3vJLkAbmm4aIiDy0D8tPSWPF_ldU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
