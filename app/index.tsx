@@ -156,6 +156,8 @@ export default function WebViewScreen() {
   const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const appStateRef = useRef(AppState.currentState);
   const bubbleActiveRef = useRef(false);
+  const bubbleCountRef = useRef(0);
+  const fcmTokenRef = useRef<string | null>(null);
 
   const ensureLocationPermission = useCallback(async () => {
     const granted = await requestLocationPermission();
@@ -183,6 +185,30 @@ export default function WebViewScreen() {
       if (!has) FloatingBubble?.requestPermission?.();
     });
 
+    // Register for real push notifications (FCM) so orders/messages can be
+    // delivered even when the app is fully closed — the WebView JS bridge
+    // (window.Notification shim) only works while the app process is alive,
+    // which is not enough for a killed/backgrounded app.
+    if (Platform.OS === "android") {
+      (async () => {
+        try {
+          const current = await Notifications.getPermissionsAsync();
+          let granted = current.status === "granted";
+          if (!granted) {
+            const req = await Notifications.requestPermissionsAsync();
+            granted = req.status === "granted";
+          }
+          if (!granted) return;
+          const tokenData = await Notifications.getDevicePushTokenAsync();
+          fcmTokenRef.current = tokenData.data;
+          sendFcmTokenToWebView();
+        } catch {
+          // getDevicePushTokenAsync requires a compiled build with Firebase
+          // configured (google-services.json) — no-op otherwise.
+        }
+      })();
+    }
+
     const sub = AppState.addEventListener("change", async (next) => {
       const wasBackground = appStateRef.current !== "active";
       appStateRef.current = next;
@@ -191,6 +217,19 @@ export default function WebViewScreen() {
       if (wasBackground && next === "active") {
         const granted = await isLocationPermissionGranted();
         setLocationDenied(!granted);
+
+        // The bubble may have failed to start earlier because the overlay
+        // permission wasn't granted yet (native `start()` just opens the
+        // Settings screen and bails out without starting the service). Retry
+        // now that the user may have come back from granting it — this is
+        // the missing piece that made the bubble only ever appear "inside"
+        // the app (as the web-rendered widget) and never as a real
+        // system-wide overlay.
+        if (bubbleActiveRef.current) {
+          FloatingBubble?.hasPermission?.((has: boolean) => {
+            if (has) FloatingBubble?.start?.(bubbleCountRef.current);
+          });
+        }
       }
     });
     return () => sub.remove();
@@ -232,20 +271,23 @@ export default function WebViewScreen() {
         // background so the driver stays visible even off-screen.
         if (msg.type === "DRIVER_BUBBLE_ACTIVE") {
           bubbleActiveRef.current = true;
-          FloatingBubble?.start?.(msg.count ?? 0);
+          bubbleCountRef.current = msg.count ?? 0;
+          FloatingBubble?.start?.(bubbleCountRef.current);
           startBackgroundLocationTracking();
           return;
         }
 
         if (msg.type === "DRIVER_BUBBLE_UPDATE") {
+          bubbleCountRef.current = msg.count ?? 0;
           if (bubbleActiveRef.current) {
-            FloatingBubble?.update?.(msg.count ?? 0);
+            FloatingBubble?.update?.(bubbleCountRef.current);
           }
           return;
         }
 
         if (msg.type === "DRIVER_BUBBLE_HIDE") {
           bubbleActiveRef.current = false;
+          bubbleCountRef.current = 0;
           FloatingBubble?.stop?.();
           stopBackgroundLocationTracking();
           return;
@@ -261,6 +303,20 @@ export default function WebViewScreen() {
     },
     [ensureLocationPermission]
   );
+
+  const sendFcmTokenToWebView = useCallback(() => {
+    const token = fcmTokenRef.current;
+    if (!token) return;
+    const js = `
+      (function() {
+        try {
+          window.dispatchEvent(new CustomEvent('taxi-native-fcm-token', { detail: ${JSON.stringify(token)} }));
+        } catch (e) {}
+      })();
+      true;
+    `;
+    webviewRef.current?.injectJavaScript(js);
+  }, []);
 
   const handleBack = useCallback(() => {
     if (canGoBack) {
@@ -337,6 +393,7 @@ export default function WebViewScreen() {
           if (loadingTimerRef.current) clearTimeout(loadingTimerRef.current);
           hasLoadedRef.current = true;
           setLoading(false);
+          sendFcmTokenToWebView();
         }}
         onError={() => {
           setLoading(false);
