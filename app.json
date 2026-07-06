@@ -23,6 +23,7 @@
     },
     "android": {
       "package": "ru.taxiimpulse.app",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#19063e"
