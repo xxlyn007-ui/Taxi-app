@@ -17,6 +17,8 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.Timer
+import java.util.TimerTask
 
 class FloatingBubbleService : Service() {
 
@@ -32,6 +34,7 @@ class FloatingBubbleService : Service() {
     private var currentOrdersJson = "[]"
 
     private val uiHandler = Handler(Looper.getMainLooper())
+    private var fetchTimer: Timer? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -79,9 +82,25 @@ class FloatingBubbleService : Service() {
             addAction(ACTION_UPDATE)
             addAction(ACTION_ORDERS_UPDATE)
         }
-        registerReceiver(receiver, f, RECEIVER_NOT_EXPORTED)
+        // RECEIVER_NOT_EXPORTED (3-arg form) was added in API 33 (Android 13).
+        // On older devices the method doesn't exist → NoSuchMethodError → broadcasts
+        // are never received. Fall back to the 2-arg form on API < 33; for
+        // internal-only broadcasts this is safe (no external app can send them).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, f, RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(receiver, f)
+        }
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         createBubble()
+        // Start autonomous background fetch — runs every 12 s regardless of
+        // whether broadcasts from the WebView arrive (handles backgrounded WebView).
+        fetchTimer = Timer().also { t ->
+            t.scheduleAtFixedRate(object : TimerTask() {
+                override fun run() { backgroundFetch() }
+            }, 4000L, 12000L)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -90,6 +109,7 @@ class FloatingBubbleService : Service() {
     }
 
     override fun onDestroy() {
+        fetchTimer?.cancel(); fetchTimer = null
         super.onDestroy()
         try { unregisterReceiver(receiver) } catch (_: Exception) {}
         hidePanel()
@@ -446,6 +466,32 @@ class FloatingBubbleService : Service() {
         packageManager.getLaunchIntentForPackage(packageName)
             ?.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP) }
             ?.let { startActivity(it) }
+    }
+
+    // ─── Background periodic fetch ────────────────────────────────────────────
+
+    /** Runs on a background thread (Timer) every 12 s. Fetches orders from the
+     *  API autonomously — does NOT rely on broadcasts from the WebView.
+     *  This is the primary data source when the WebView is backgrounded/throttled. */
+    private fun backgroundFetch() {
+        val token = driverToken
+        val city  = driverCity
+        val base  = apiBaseUrl
+        if (token.isBlank() || city.isBlank() || base.isBlank()) return
+        try {
+            val fresh = fetchOrdersFromApi(token, city, base)
+            val freshArr = try { JSONArray(fresh) } catch (_: Exception) { return }
+            val freshCount = freshArr.length()
+            val prevCount  = try { JSONArray(currentOrdersJson).length() } catch (_: Exception) { 0 }
+            // Update only if we got real orders OR the cache was empty
+            if (freshCount > 0 || prevCount == 0) {
+                currentOrdersJson = fresh
+                uiHandler.post {
+                    refreshBadge(freshCount)
+                    if (panelVisible) rebuildOrdersInPanel()
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     // ─── Native HTTP fetch ────────────────────────────────────────────────────
