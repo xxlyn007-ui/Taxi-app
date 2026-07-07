@@ -158,6 +158,8 @@ export default function WebViewScreen() {
   const bubbleActiveRef = useRef(false);
   const bubbleCountRef = useRef(0);
   const fcmTokenRef = useRef<string | null>(null);
+  const driverAuthTokenRef = useRef<string | null>(null);
+  const driverBaseUrlRef = useRef<string | null>(null);
 
   const ensureLocationPermission = useCallback(async () => {
     const granted = await requestLocationPermission();
@@ -253,6 +255,39 @@ export default function WebViewScreen() {
     return () => sub.remove();
   }, [ensureLocationPermission]);
 
+  // Native push polling — runs in RN JS runtime (not the WebView), so it works
+  // even when the WebView is suspended/throttled in the background.
+  // Every 15 s we drain pending server-side notifications for the driver user.
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const token = driverAuthTokenRef.current;
+      const base  = driverBaseUrlRef.current;
+      if (!token || !base) return;
+      try {
+        const resp = await fetch(`${base}/api/push/poll`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const notifs: Array<{ title: string; body: string }> = data.notifications ?? [];
+        for (const n of notifs) {
+          await playNotificationSound();
+          await Notifications.scheduleNotificationAsync({
+            content: {
+              title: n.title || "Taxi Impulse",
+              body:  n.body  || "",
+              sound: "notification.mp3",
+              android: { channelId: "taxi-impulse" },
+            },
+            trigger: null,
+          });
+        }
+      } catch {}
+    }, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleMessage = useCallback(
     async (event: { nativeEvent: { data: string } }) => {
       try {
@@ -287,6 +322,9 @@ export default function WebViewScreen() {
           if (msg.token && msg.city && msg.baseUrl) {
             FloatingBubble?.setDriverInfo?.(msg.token, msg.city, msg.baseUrl);
           }
+          // Store for native push polling (runs in RN JS runtime, not WebView)
+          if (msg.token) driverAuthTokenRef.current = msg.token;
+          if (msg.baseUrl) driverBaseUrlRef.current = msg.baseUrl;
           return;
         }
 
