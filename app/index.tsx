@@ -226,22 +226,26 @@ export default function WebViewScreen() {
         }
 
         // Check if the driver tapped "Принять заказ" in the native bubble panel
-        // while the app was in the background. If so, dispatch the accept event
-        // into the WebView so the web bubble can call the API.
+        // while the app was in the background. Delay 600ms so the WebView has
+        // time to finish rendering and the React component can attach its listener.
         FloatingBubble?.popPendingAccept?.((orderId: number) => {
           if (orderId > 0) {
-            webviewRef.current?.injectJavaScript(
-              `(function(){try{window.dispatchEvent(new CustomEvent('taxi-native-accept-order',{detail:${orderId}}));}catch(e){}})();true;`
-            );
+            setTimeout(() => {
+              webviewRef.current?.injectJavaScript(
+                `(function(){try{window.dispatchEvent(new CustomEvent('taxi-native-accept-order',{detail:${orderId}}));}catch(e){}})();true;`
+              );
+            }, 600);
           }
         });
 
         // Check if the driver pressed × (close) in the native bubble panel.
         FloatingBubble?.popPendingClose?.((shouldClose: boolean) => {
           if (shouldClose) {
-            webviewRef.current?.injectJavaScript(
-              `(function(){try{window.dispatchEvent(new CustomEvent('taxi-native-close-bubble'));}catch(e){}})();true;`
-            );
+            setTimeout(() => {
+              webviewRef.current?.injectJavaScript(
+                `(function(){try{window.dispatchEvent(new CustomEvent('taxi-native-close-bubble'));}catch(e){}})();true;`
+              );
+            }, 400);
           }
         });
       }
@@ -262,6 +266,8 @@ export default function WebViewScreen() {
                 title: msg.title || "Taxi Impulse",
                 body: msg.body || "",
                 sound: "notification.mp3",
+                // Android: use our configured channel which has sound + vibration
+                android: { channelId: "taxi-impulse" },
               },
               trigger: null,
             });
@@ -275,6 +281,11 @@ export default function WebViewScreen() {
         if (msg.type === "DRIVER_AUTH_INFO") {
           if (msg.token && msg.driverId) {
             await saveDriverAuthInfo(msg.token, msg.driverId);
+          }
+          // Give the native FloatingBubble service the credentials it needs
+          // to fetch orders itself when the WebView is suspended in background.
+          if (msg.token && msg.city && msg.baseUrl) {
+            FloatingBubble?.setDriverInfo?.(msg.token, msg.city, msg.baseUrl);
           }
           return;
         }
