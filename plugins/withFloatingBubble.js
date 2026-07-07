@@ -61,59 +61,58 @@ function withFloatingBubble(config) {
     let src = cfg.modResults.contents;
 
     if (src.includes('FloatingBubblePackage')) {
+      console.log('[withFloatingBubble] FloatingBubblePackage already present, skipping injection');
       return cfg;
     }
 
-    // Add import
+    // Add import right after the package declaration line — always safe
     src = src.replace(
-      /(import com\.facebook\.react\.ReactApplication)/,
-      'import ru.taxiimpulse.app.FloatingBubblePackage\n$1'
+      /^(package [^\n]+\n)/,
+      '$1import ru.taxiimpulse.app.FloatingBubblePackage\n'
     );
 
-    // Strategy 1: multi-line val with this@MainApplication
-    if (src.includes('val packages = PackageList(this@MainApplication).packages')) {
+    // Transform single-expression getPackages() into a block that adds FloatingBubblePackage.
+    // Capture the leading whitespace (indent) so the replacement uses matching indentation.
+    // The /s flag makes . match newlines, handling multi-line = \n PackageList cases.
+    const singleExprMatch = src.match(
+      /^([ \t]*)(override fun getPackages\(\)\s*:\s*List<ReactPackage>)\s*=\s*(PackageList\([^)]+\)\.packages)/m
+    );
+
+    if (singleExprMatch) {
+      const [fullMatch, indent, funcDecl, packageListCall] = singleExprMatch;
+      const innerIndent = indent + '  ';
+      const replacement =
+        `${indent}${funcDecl} {\n` +
+        `${innerIndent}val packages = ${packageListCall}\n` +
+        `${innerIndent}packages.add(FloatingBubblePackage())\n` +
+        `${innerIndent}return packages\n` +
+        `${indent}}`;
+      src = src.replace(fullMatch, replacement);
+      console.log('[withFloatingBubble] injected FloatingBubblePackage via single-expr transform');
+    } else if (src.includes('val packages = PackageList')) {
+      // Already a block form: inject packages.add() after the PackageList line
       src = src.replace(
-        /val packages = PackageList\(this@MainApplication\)\.packages/,
-        'val packages = PackageList(this@MainApplication).packages\n      packages.add(FloatingBubblePackage())'
+        /(val packages = PackageList[^\n]+\n)/,
+        '$1        packages.add(FloatingBubblePackage())\n'
       );
-    }
-    // Strategy 2: multi-line val with this
-    else if (src.includes('val packages = PackageList(this).packages')) {
+      console.log('[withFloatingBubble] injected FloatingBubblePackage via block-form insert');
+    } else if (src.includes('return PackageList')) {
+      // No val, just returns PackageList directly — convert to block style
       src = src.replace(
-        /val packages = PackageList\(this\)\.packages/,
-        'val packages = PackageList(this).packages\n      packages.add(FloatingBubblePackage())'
+        /(\s+)(return PackageList([^\n]+))/,
+        (_, ws, _ret, args) => {
+          const indent = ws.match(/\n([ \t]*)/)?.[1] ?? '        ';
+          return (
+            `\n${indent}val packages = PackageList${args}\n` +
+            `${indent}packages.add(FloatingBubblePackage())\n` +
+            `${indent}return packages`
+          );
+        }
       );
-    }
-    // Strategy 3: single-expression function = PackageList(this@MainApplication).packages
-    else if (/override fun getPackages[^=]*=\s*PackageList\(this@MainApplication\)\.packages/.test(src)) {
-      src = src.replace(
-        /override fun getPackages\(\)\s*:\s*List<ReactPackage>\s*=\s*PackageList\(this@MainApplication\)\.packages/,
-        'override fun getPackages(): List<ReactPackage> {\n        val packages = PackageList(this@MainApplication).packages\n        packages.add(FloatingBubblePackage())\n        return packages\n      }'
-      );
-    }
-    // Strategy 4: single-expression function = PackageList(this).packages
-    else if (/override fun getPackages[^=]*=\s*PackageList\(this\)\.packages/.test(src)) {
-      src = src.replace(
-        /override fun getPackages\(\)\s*:\s*List<ReactPackage>\s*=\s*PackageList\(this\)\.packages/,
-        'override fun getPackages(): List<ReactPackage> {\n        val packages = PackageList(this).packages\n        packages.add(FloatingBubblePackage())\n        return packages\n      }'
-      );
-    }
-    // Strategy 5: return PackageList(this).packages
-    else if (src.includes('return PackageList(this).packages')) {
-      src = src.replace(
-        /return PackageList\(this\)\.packages/,
-        'val packages = PackageList(this).packages\n        packages.add(FloatingBubblePackage())\n        return packages'
-      );
-    }
-    // Strategy 6: return PackageList(this@MainApplication).packages
-    else if (src.includes('return PackageList(this@MainApplication).packages')) {
-      src = src.replace(
-        /return PackageList\(this@MainApplication\)\.packages/,
-        'val packages = PackageList(this@MainApplication).packages\n        packages.add(FloatingBubblePackage())\n        return packages'
-      );
-    }
-    else {
+      console.log('[withFloatingBubble] injected FloatingBubblePackage via return-PackageList transform');
+    } else {
       console.warn('[withFloatingBubble] WARNING: could not find getPackages injection point in MainApplication.kt');
+      console.warn('[withFloatingBubble] File snippet:\n' + src.slice(0, 1500));
     }
 
     cfg.modResults.contents = src;
