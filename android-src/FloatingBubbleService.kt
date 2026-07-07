@@ -13,6 +13,10 @@ import android.view.*
 import android.widget.*
 import androidx.core.app.NotificationCompat
 import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 
 class FloatingBubbleService : Service() {
 
@@ -27,19 +31,21 @@ class FloatingBubbleService : Service() {
 
     private var currentOrdersJson = "[]"
 
+    private val uiHandler = Handler(Looper.getMainLooper())
+
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 ACTION_UPDATE -> {
                     val n = intent.getIntExtra(EXTRA_COUNT, 0)
-                    Handler(Looper.getMainLooper()).post { refreshBadge(n) }
+                    uiHandler.post { refreshBadge(n) }
                 }
                 ACTION_ORDERS_UPDATE -> {
                     currentOrdersJson = intent.getStringExtra(EXTRA_ORDERS) ?: "[]"
-                    val n = try { JSONArray(currentOrdersJson).length() } catch (e: Exception) { 0 }
-                    Handler(Looper.getMainLooper()).post {
+                    val n = try { JSONArray(currentOrdersJson).length() } catch (_: Exception) { 0 }
+                    uiHandler.post {
                         refreshBadge(n)
-                        if (panelVisible) { hidePanel(); showPanel() }
+                        if (panelVisible) rebuildOrdersInPanel()
                     }
                 }
             }
@@ -56,6 +62,11 @@ class FloatingBubbleService : Service() {
 
         @Volatile var pendingAcceptOrderId: Int = 0
         @Volatile var pendingClose: Boolean = false
+
+        // Set by FloatingBubbleModule.setDriverInfo — used to fetch orders natively
+        @Volatile var driverToken: String = ""
+        @Volatile var driverCity: String = ""
+        @Volatile var apiBaseUrl: String = ""
     }
 
     // ─── Lifecycle ────────────────────────────────────────────────────────────
@@ -162,7 +173,7 @@ class FloatingBubbleService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (ev.rawX - rx).toInt()
                     val dy = (ev.rawY - ry).toInt()
-                    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+                    if (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8) {
                         moved = true
                         bubbleParams!!.x = sx - dx
                         bubbleParams!!.y = sy + dy
@@ -194,20 +205,61 @@ class FloatingBubbleService : Service() {
         if (panelVisible) return
         panelVisible = true
 
-        // Capture service context explicitly — needed because view builder lambdas
-        // have `this` bound to the view being constructed, not to the Service.
-        val ctx: Context = this
-
-        val sw     = resources.displayMetrics.widthPixels
+        // Show panel immediately with cached data
+        val builtView = buildPanelView(currentOrdersJson)
+        val by = bubbleParams?.y ?: dp(300)
+        val sw = resources.displayMetrics.widthPixels
         val panelW = minOf(dp(320), sw - dp(16))
-        val panelH = dp(460)
 
-        val orders = try { JSONArray(currentOrdersJson) } catch (_: Exception) { JSONArray() }
+        panelParams = WindowManager.LayoutParams(
+            panelW, dp(460), overlayWindowType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = dp(8); y = maxOf(dp(30), by - dp(300))
+        }
+        panelView = builtView
+        try { wm.addView(builtView, panelParams) } catch (_: Exception) {}
 
-        // ── Scroll container ──
+        // Fetch fresh orders from the API in background and rebuild
+        val token = driverToken
+        val city  = driverCity
+        val base  = apiBaseUrl
+        if (token.isNotBlank() && city.isNotBlank() && base.isNotBlank()) {
+            Thread {
+                val fresh = fetchOrdersFromApi(token, city, base)
+                uiHandler.post {
+                    if (!panelVisible) return@post
+                    currentOrdersJson = fresh
+                    // Swap out panel view with fresh data
+                    try { panelView?.let { wm.removeView(it) } } catch (_: Exception) {}
+                    val newView = buildPanelView(fresh)
+                    panelView = newView
+                    try { wm.addView(newView, panelParams) } catch (_: Exception) {}
+                    // Update badge too
+                    val n = try { JSONArray(fresh).length() } catch (_: Exception) { 0 }
+                    refreshBadge(n)
+                }
+            }.start()
+        }
+    }
+
+    /** Called when ORDERS_UPDATE broadcast arrives and panel is open — live refresh. */
+    private fun rebuildOrdersInPanel() {
+        if (!panelVisible) return
+        try { panelView?.let { wm.removeView(it) } } catch (_: Exception) {}
+        val newView = buildPanelView(currentOrdersJson)
+        panelView = newView
+        try { wm.addView(newView, panelParams) } catch (_: Exception) {}
+    }
+
+    /** Build the full scrollable panel view from a JSON string of orders. */
+    private fun buildPanelView(ordersJson: String): ScrollView {
+        val ctx: Context = this
+        val orders = try { JSONArray(ordersJson) } catch (_: Exception) { JSONArray() }
+
         val scroll = ScrollView(ctx).apply { isVerticalScrollBarEnabled = true }
-
-        // ── Card ──
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
@@ -237,7 +289,7 @@ class FloatingBubbleService : Service() {
             typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE)
         })
         if (orders.length() > 0) {
-            titleRow.addView(TextView(ctx).apply {
+            val badge = TextView(ctx).apply {
                 text = orders.length().toString(); textSize = 11f
                 typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE)
                 setPadding(dp(6), dp(2), dp(6), dp(2))
@@ -245,15 +297,17 @@ class FloatingBubbleService : Service() {
                     shape = GradientDrawable.RECTANGLE
                     setColor(Color.parseColor("#7c3aed")); cornerRadius = dp(8).toFloat()
                 }
-            }.also { tv ->
-                val lp = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-                lp.marginStart = dp(6); tv.layoutParams = lp
-            })
+            }
+            val badgeLp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            badgeLp.marginStart = dp(6)
+            titleRow.addView(badge, badgeLp)
         }
         header.addView(titleRow, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        // Close (×) button
         header.addView(TextView(ctx).apply {
             text = "✕"; textSize = 16f; setTextColor(Color.parseColor("#9ca3af"))
             setPadding(dp(8), dp(4), dp(4), dp(4))
@@ -262,10 +316,10 @@ class FloatingBubbleService : Service() {
                 hidePanel(); stopSelf(); openApp()
             }
         })
-        card.addView(header, wrapW())
+        card.addView(header, matchW())
         card.addView(hDivider(ctx))
 
-        // ── Orders ──
+        // ── Orders or empty state ──
         if (orders.length() == 0) {
             val empty = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
@@ -282,11 +336,10 @@ class FloatingBubbleService : Service() {
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply { topMargin = dp(6) }
             })
-            card.addView(empty, wrapW())
+            card.addView(empty, matchW())
         } else {
             for (i in 0 until minOf(orders.length(), 10)) {
                 if (i > 0) card.addView(hDivider(ctx))
-
                 val o       = orders.getJSONObject(i)
                 val orderId = o.optInt("id", 0)
                 val from    = o.optString("fromAddress", "—")
@@ -328,9 +381,9 @@ class FloatingBubbleService : Service() {
                         LinearLayout.LayoutParams.WRAP_CONTENT
                     ).apply { marginStart = dp(8) }
                 })
-                row.addView(addrRow, wrapW())
+                row.addView(addrRow, matchW())
 
-                // "Принять заказ" button
+                // Accept button
                 row.addView(TextView(ctx).apply {
                     text = "Принять заказ"; textSize = 12f
                     typeface = Typeface.DEFAULT_BOLD
@@ -349,7 +402,7 @@ class FloatingBubbleService : Service() {
                         hidePanel(); openApp()
                     }
                 })
-                card.addView(row, wrapW())
+                card.addView(row, matchW())
             }
         }
 
@@ -369,23 +422,12 @@ class FloatingBubbleService : Service() {
             text = "GPS активен · обновление каждые 5 сек"
             textSize = 10f; setTextColor(Color.parseColor("#6b7280"))
         })
-        card.addView(footer, wrapW())
+        card.addView(footer, matchW())
 
         scroll.addView(card, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT
         ))
-
-        val by = bubbleParams?.y ?: dp(300)
-        panelParams = WindowManager.LayoutParams(
-            panelW, panelH, overlayWindowType(),
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.END
-            x = dp(8); y = maxOf(dp(30), by - dp(300))
-        }
-        panelView = scroll
-        wm.addView(scroll, panelParams)
+        return scroll
     }
 
     private fun hidePanel() {
@@ -401,10 +443,53 @@ class FloatingBubbleService : Service() {
             ?.let { startActivity(it) }
     }
 
+    // ─── Native HTTP fetch ────────────────────────────────────────────────────
+
+    /**
+     * Fetch pending orders for [city] using [token]. Returns a JSON string
+     * of [{id, fromAddress, toAddress, price}] objects, or falls back to
+     * [currentOrdersJson] on any error.
+     */
+    private fun fetchOrdersFromApi(token: String, city: String, base: String): String {
+        return try {
+            val encodedCity = URLEncoder.encode(city, "UTF-8")
+            val conn = URL("$base/api/orders?status=pending&city=$encodedCity")
+                .openConnection() as HttpURLConnection
+            conn.apply {
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Accept", "application/json")
+                connectTimeout = 6000
+                readTimeout    = 6000
+            }
+            val code = conn.responseCode
+            if (code != 200) { conn.disconnect(); return currentOrdersJson }
+            val body = conn.inputStream.bufferedReader().readText()
+            conn.disconnect()
+
+            val arr = JSONArray(body)
+            val out = JSONArray()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                if (o.optString("status") != "pending") continue
+                if (city.isNotBlank() && o.optString("city") != city) continue
+                out.put(JSONObject().apply {
+                    put("id", o.optInt("id"))
+                    put("fromAddress", o.optString("fromAddress", "—"))
+                    put("toAddress", o.optString("toAddress", ""))
+                    put("price", o.optInt("price", 0))
+                })
+                if (out.length() >= 10) break
+            }
+            out.toString()
+        } catch (_: Exception) {
+            currentOrdersJson // network error — keep cached
+        }
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density + 0.5f).toInt()
-    private fun wrapW() = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+    private fun matchW()   = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
     private fun hDivider(ctx: Context) = View(ctx).apply {
         setBackgroundColor(Color.parseColor("#1a1a3e"))
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1))
