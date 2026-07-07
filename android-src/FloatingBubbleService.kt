@@ -5,8 +5,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.graphics.Color
-import android.graphics.PixelFormat
+import android.graphics.*
+import android.graphics.drawable.GradientDrawable
 import android.os.*
 import android.view.*
 import android.widget.*
@@ -15,13 +15,15 @@ import androidx.core.app.NotificationCompat
 class FloatingBubbleService : Service() {
 
     private lateinit var windowManager: WindowManager
-    private lateinit var bubbleView: TextView
+    private lateinit var bubbleView: FrameLayout
+    private lateinit var bubbleLabel: TextView
+    private lateinit var badgeView: TextView
     private var layoutParams: WindowManager.LayoutParams? = null
 
     private val updateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val count = intent.getIntExtra(EXTRA_COUNT, 0)
-            updateBubbleText(count)
+            updateBubble(count)
         }
     }
 
@@ -33,32 +35,83 @@ class FloatingBubbleService : Service() {
         createBubble()
     }
 
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density + 0.5f).toInt()
+
     private fun createBubble() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
-        bubbleView = TextView(this).apply {
-            text = "🚕"
-            textSize = 20f
+        val size = dp(60)
+        val badgeSize = dp(20)
+
+        // Круглый фон пузырька (фиолетовый градиент)
+        val circleDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.parseColor("#7c3aed"))
+            setStroke(dp(2), Color.parseColor("#a78bfa"))
+        }
+
+        // Основной контейнер — круг
+        bubbleView = FrameLayout(this).apply {
+            background = circleDrawable
+            layoutParams = FrameLayout.LayoutParams(size, size)
+            elevation = 12f
+        }
+
+        // Иконка молнии ⚡ внутри пузырька
+        bubbleLabel = TextView(this).apply {
+            text = "⚡"
+            textSize = 22f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#7c3aed"))
-            setPadding(28, 20, 28, 20)
         }
+
+        // Красный бейдж с количеством заказов (правый верхний угол)
+        val badgeDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.parseColor("#ef4444"))
+        }
+        badgeView = TextView(this).apply {
+            text = ""
+            textSize = 10f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            background = badgeDrawable
+            visibility = View.GONE
+        }
+
+        bubbleView.addView(bubbleLabel, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        bubbleView.addView(badgeView, FrameLayout.LayoutParams(badgeSize, badgeSize).apply {
+            gravity = Gravity.TOP or Gravity.END
+            topMargin = dp(2)
+            rightMargin = dp(2)
+        })
+
+        // Тень (elevation) + rim glow через наружную обводку
+        bubbleView.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outline.setOval(0, 0, view.width, view.height)
+            }
+        }
+        bubbleView.clipToOutline = true
 
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
 
         layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            size, size,
             type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
-            x = 24
-            y = 300
+            x = dp(16)
+            y = dp(300)
         }
 
         windowManager.addView(bubbleView, layoutParams)
@@ -83,16 +136,21 @@ class FloatingBubbleService : Service() {
                     windowManager.updateViewLayout(bubbleView, layoutParams)
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (System.currentTimeMillis() - pressTime < 250L) openApp()
+                    if (System.currentTimeMillis() - pressTime < 300L) openApp()
                 }
             }
             true
         }
     }
 
-    private fun updateBubbleText(count: Int) {
+    private fun updateBubble(count: Int) {
         Handler(Looper.getMainLooper()).post {
-            bubbleView.text = if (count > 0) "🚕 $count" else "🚕"
+            if (count > 0) {
+                badgeView.text = if (count > 9) "9+" else count.toString()
+                badgeView.visibility = View.VISIBLE
+            } else {
+                badgeView.visibility = View.GONE
+            }
         }
     }
 
@@ -105,7 +163,7 @@ class FloatingBubbleService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val count = intent?.getIntExtra(EXTRA_COUNT, 0) ?: 0
-        updateBubbleText(count)
+        updateBubble(count)
         return START_STICKY
     }
 
@@ -133,7 +191,7 @@ class FloatingBubbleService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Taxi Impulse")
-            .setContentText("Пузырёк заказов активен — нажмите чтобы открыть")
+            .setContentText("Виджет активен — нажмите чтобы открыть")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentIntent(pi)
             .setOngoing(true)
