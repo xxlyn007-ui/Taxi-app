@@ -20,27 +20,22 @@ class FloatingBubbleModule(private val ctx: ReactApplicationContext) : ReactCont
     @ReactMethod
     fun requestPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(ctx)) {
-            val intent = Intent(
+            ctx.startActivity(Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:${ctx.packageName}")
-            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-            ctx.startActivity(intent)
+            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
         }
     }
 
     @ReactMethod
     fun start(count: Int) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(ctx)) {
-            requestPermission()
-            return
+            requestPermission(); return
         }
         val intent = Intent(ctx, FloatingBubbleService::class.java)
             .putExtra(FloatingBubbleService.EXTRA_COUNT, count)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            ctx.startForegroundService(intent)
-        } else {
-            ctx.startService(intent)
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(intent)
+        else ctx.startService(intent)
     }
 
     @ReactMethod
@@ -51,8 +46,40 @@ class FloatingBubbleModule(private val ctx: ReactApplicationContext) : ReactCont
         )
     }
 
+    /** Pass full orders JSON array so the native panel can show addresses + prices. */
+    @ReactMethod
+    fun updateOrders(ordersJson: String) {
+        ctx.sendBroadcast(
+            Intent(FloatingBubbleService.ACTION_ORDERS_UPDATE)
+                .putExtra(FloatingBubbleService.EXTRA_ORDERS, ordersJson)
+        )
+    }
+
     @ReactMethod
     fun stop() {
         ctx.stopService(Intent(ctx, FloatingBubbleService::class.java))
+        FloatingBubbleService.pendingAcceptOrderId = 0
+        FloatingBubbleService.pendingClose = false
+    }
+
+    /**
+     * Returns the orderId tapped in the native bubble panel (0 = none) and clears it.
+     * Called by JS whenever the app comes back to the foreground.
+     */
+    @ReactMethod
+    fun popPendingAccept(callback: Callback) {
+        val id = FloatingBubbleService.pendingAcceptOrderId
+        FloatingBubbleService.pendingAcceptOrderId = 0
+        callback.invoke(id)
+    }
+
+    /**
+     * Returns true if the driver pressed × in the native bubble panel, then clears it.
+     */
+    @ReactMethod
+    fun popPendingClose(callback: Callback) {
+        val v = FloatingBubbleService.pendingClose
+        FloatingBubbleService.pendingClose = false
+        callback.invoke(v)
     }
 }
