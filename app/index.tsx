@@ -85,6 +85,8 @@ const INJECTED_JS = `
     window.__TAXI_NATIVE_APP__ = true;
     window.__TAXI_APP_PLATFORM__ = '${Platform.OS}';
     document.documentElement.setAttribute('data-native-app', 'true');
+
+    // Intercept window.Notification — relay to native bridge for sound + system notification.
     var N = function(title, opts) {
       try { window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
         JSON.stringify({ type: 'NOTIFICATION', title: title, body: (opts && opts.body) || '' })); } catch(e){}
@@ -92,6 +94,27 @@ const INJECTED_JS = `
     N.requestPermission = function() { return Promise.resolve('granted'); };
     N.permission = 'granted';
     try { window.Notification = N; } catch(e) {}
+
+    // Send auth token to native on every page load/focus so native can poll
+    // /api/push/poll for notifications independently of the WebView JS runtime.
+    // Works for ALL roles (passenger, driver, admin) without needing DRIVER_AUTH_INFO.
+    function sendAuthToNative() {
+      try {
+        var token = localStorage.getItem('taxi_token');
+        if (token && window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(
+            JSON.stringify({ type: 'USER_AUTH_INFO', token: token })
+          );
+        }
+      } catch(e) {}
+    }
+    sendAuthToNative();
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') sendAuthToNative();
+    });
+    window.addEventListener('storage', function(e) {
+      if (e.key === 'taxi_token') sendAuthToNative();
+    });
   })();
   true;
 `;
@@ -313,6 +336,18 @@ export default function WebViewScreen() {
         // Driver auth info relayed from the web page — needed so the native
         // background location task can authenticate its own requests when
         // the app is not in the foreground.
+        // Auth token from INJECTED_JS (fires on every page load for all roles).
+        // Used by the native push-poll interval so notifications work even when
+        // the WebView JS runtime is throttled in the background.
+        if (msg.type === "USER_AUTH_INFO") {
+          if (msg.token) {
+            driverAuthTokenRef.current = msg.token;
+            // Base URL is the same as the site URL hardcoded in this file
+            driverBaseUrlRef.current = SITE_URL;
+          }
+          return;
+        }
+
         if (msg.type === "DRIVER_AUTH_INFO") {
           if (msg.token && msg.driverId) {
             await saveDriverAuthInfo(msg.token, msg.driverId);
