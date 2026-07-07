@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "taxi-impulse-mobile",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/images/splash.png",
       "resizeMode": "contain",
@@ -73,12 +73,6 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    },
-    "extra": {
-      "eas": {
-        "projectId": "2fda5086-7022-4242-8103-88b39f8f3a54"
-      }
-    },
-    "owner": "taxiap"
+    }
   }
 }
