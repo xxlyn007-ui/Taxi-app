@@ -193,13 +193,21 @@ export default function WebViewScreen() {
   useEffect(() => {
     Notifications.requestPermissionsAsync().catch(() => {});
     if (Platform.OS === "android") {
-      Notifications.setNotificationChannelAsync("taxi-impulse", {
-        name: "Taxi Impulse",
-        importance: Notifications.AndroidImportance.HIGH,
-        sound: "notification.mp3",
-        vibrationPattern: [0, 250, 250, 250],
-        enableVibrate: true,
-      }).catch(() => {});
+      // Android caches notification channel settings on first creation and
+      // IGNORES later updates (sound, importance cannot be changed on existing
+      // channels). Delete the old channel first so each app install/update
+      // gets a fresh channel with our custom sound file.
+      (async () => {
+        await Notifications.deleteNotificationChannelAsync("taxi-impulse").catch(() => {});
+        await Notifications.setNotificationChannelAsync("taxi-impulse", {
+          name: "Taxi Impulse",
+          importance: Notifications.AndroidImportance.MAX,
+          sound: "notification.mp3",
+          vibrationPattern: [0, 250, 250, 250],
+          enableVibrate: true,
+          lightColor: "#7C3AED",
+        }).catch(() => {});
+      })();
     }
 
     ensureLocationPermission();
@@ -233,6 +241,14 @@ export default function WebViewScreen() {
         }
       })();
     }
+
+    // When a system notification (FCM) arrives while the app is in the
+    // foreground, Expo suppresses the system UI but we still want our custom
+    // sound. This listener fires for every received notification regardless of
+    // whether the app is active or backgrounded.
+    const notifSub = Notifications.addNotificationReceivedListener(() => {
+      playNotificationSound().catch(() => {});
+    });
 
     const sub = AppState.addEventListener("change", async (next) => {
       const wasBackground = appStateRef.current !== "active";
@@ -275,7 +291,7 @@ export default function WebViewScreen() {
         });
       }
     });
-    return () => sub.remove();
+    return () => { sub.remove(); notifSub.remove(); };
   }, [ensureLocationPermission]);
 
   // Native push polling — runs in RN JS runtime (not the WebView), so it works
