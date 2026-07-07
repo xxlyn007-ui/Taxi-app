@@ -222,24 +222,29 @@ class FloatingBubbleService : Service() {
         panelView = builtView
         try { wm.addView(builtView, panelParams) } catch (_: Exception) {}
 
-        // Fetch fresh orders from the API in background and rebuild
+        // Fetch fresh orders from the API in background only if cache is empty
         val token = driverToken
         val city  = driverCity
         val base  = apiBaseUrl
+        val cachedCount = try { JSONArray(currentOrdersJson).length() } catch (_: Exception) { 0 }
         if (token.isNotBlank() && city.isNotBlank() && base.isNotBlank()) {
             Thread {
                 val fresh = fetchOrdersFromApi(token, city, base)
+                val freshCount = try { JSONArray(fresh).length() } catch (_: Exception) { -1 }
                 uiHandler.post {
                     if (!panelVisible) return@post
-                    currentOrdersJson = fresh
-                    // Swap out panel view with fresh data
-                    try { panelView?.let { wm.removeView(it) } } catch (_: Exception) {}
-                    val newView = buildPanelView(fresh)
-                    panelView = newView
-                    try { wm.addView(newView, panelParams) } catch (_: Exception) {}
-                    // Update badge too
-                    val n = try { JSONArray(fresh).length() } catch (_: Exception) { 0 }
-                    refreshBadge(n)
+                    // IMPORTANT: Only replace cached data if the fetch returned actual orders,
+                    // or if the cache was empty. Never overwrite a non-empty cache with empty
+                    // results — network/city-filter failures should not clear valid order data.
+                    if (freshCount > 0 || cachedCount == 0) {
+                        currentOrdersJson = fresh
+                        try { panelView?.let { wm.removeView(it) } } catch (_: Exception) {}
+                        val newView = buildPanelView(fresh)
+                        panelView = newView
+                        try { wm.addView(newView, panelParams) } catch (_: Exception) {}
+                        refreshBadge(if (freshCount > 0) freshCount else 0)
+                    }
+                    // else: fetch returned empty but cache had orders → keep existing panel
                 }
             }.start()
         }
@@ -470,8 +475,10 @@ class FloatingBubbleService : Service() {
             val out = JSONArray()
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
+                // API already filtered by ?status=pending&city=..., but keep status check
+                // as a safety net. Do NOT filter by city again — city name comparison
+                // can fail silently (whitespace, Unicode normalization) and drop valid orders.
                 if (o.optString("status") != "pending") continue
-                if (city.isNotBlank() && o.optString("city") != city) continue
                 out.put(JSONObject().apply {
                     put("id", o.optInt("id"))
                     put("fromAddress", o.optString("fromAddress", "—"))
