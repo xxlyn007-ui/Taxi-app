@@ -111,8 +111,8 @@ class FloatingBubbleService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try { unregisterReceiver(updateReceiver) } catch (_: Exception) {}
-        try { if (::bubbleView.isInitialized) windowManager.removeView(bubbleView) } catch (_: Exception) {}
+        try { unregisterReceiver(updateReceiver) } catch (e: Exception) {}
+        try { if (::bubbleView.isInitialized) windowManager.removeView(bubbleView) } catch (e: Exception) {}
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
