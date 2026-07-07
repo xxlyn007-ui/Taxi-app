@@ -218,18 +218,32 @@ export default function WebViewScreen() {
         const granted = await isLocationPermissionGranted();
         setLocationDenied(!granted);
 
-        // The bubble may have failed to start earlier because the overlay
-        // permission wasn't granted yet (native `start()` just opens the
-        // Settings screen and bails out without starting the service). Retry
-        // now that the user may have come back from granting it — this is
-        // the missing piece that made the bubble only ever appear "inside"
-        // the app (as the web-rendered widget) and never as a real
-        // system-wide overlay.
+        // Retry starting the bubble after the user may have granted overlay permission.
         if (bubbleActiveRef.current) {
           FloatingBubble?.hasPermission?.((has: boolean) => {
             if (has) FloatingBubble?.start?.(bubbleCountRef.current);
           });
         }
+
+        // Check if the driver tapped "Принять заказ" in the native bubble panel
+        // while the app was in the background. If so, dispatch the accept event
+        // into the WebView so the web bubble can call the API.
+        FloatingBubble?.popPendingAccept?.((orderId: number) => {
+          if (orderId > 0) {
+            webviewRef.current?.injectJavaScript(
+              `(function(){try{window.dispatchEvent(new CustomEvent('taxi-native-accept-order',{detail:${orderId}}));}catch(e){}})();true;`
+            );
+          }
+        });
+
+        // Check if the driver pressed × (close) in the native bubble panel.
+        FloatingBubble?.popPendingClose?.((shouldClose: boolean) => {
+          if (shouldClose) {
+            webviewRef.current?.injectJavaScript(
+              `(function(){try{window.dispatchEvent(new CustomEvent('taxi-native-close-bubble'));}catch(e){}})();true;`
+            );
+          }
+        });
       }
     });
     return () => sub.remove();
@@ -281,6 +295,10 @@ export default function WebViewScreen() {
           bubbleCountRef.current = msg.count ?? 0;
           if (bubbleActiveRef.current) {
             FloatingBubble?.update?.(bubbleCountRef.current);
+            // Pass full orders so native panel can show addresses + prices
+            if (msg.orders !== undefined) {
+              FloatingBubble?.updateOrders?.(JSON.stringify(msg.orders ?? []));
+            }
           }
           return;
         }
