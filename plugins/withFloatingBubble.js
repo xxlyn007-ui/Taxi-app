@@ -60,20 +60,60 @@ function withFloatingBubble(config) {
   config = withMainApplication(config, (cfg) => {
     let src = cfg.modResults.contents;
 
-    if (!src.includes('FloatingBubblePackage')) {
-      src = src.replace(
-        /(import com\.facebook\.react\.ReactApplication)/,
-        'import ru.taxiimpulse.app.FloatingBubblePackage\n$1'
-      );
+    if (src.includes('FloatingBubblePackage')) {
+      return cfg;
+    }
 
+    // Add import
+    src = src.replace(
+      /(import com\.facebook\.react\.ReactApplication)/,
+      'import ru.taxiimpulse.app.FloatingBubblePackage\n$1'
+    );
+
+    // Strategy 1: multi-line val with this@MainApplication
+    if (src.includes('val packages = PackageList(this@MainApplication).packages')) {
       src = src.replace(
         /val packages = PackageList\(this@MainApplication\)\.packages/,
         'val packages = PackageList(this@MainApplication).packages\n      packages.add(FloatingBubblePackage())'
       );
+    }
+    // Strategy 2: multi-line val with this
+    else if (src.includes('val packages = PackageList(this).packages')) {
       src = src.replace(
         /val packages = PackageList\(this\)\.packages/,
         'val packages = PackageList(this).packages\n      packages.add(FloatingBubblePackage())'
       );
+    }
+    // Strategy 3: single-expression function = PackageList(this@MainApplication).packages
+    else if (/override fun getPackages[^=]*=\s*PackageList\(this@MainApplication\)\.packages/.test(src)) {
+      src = src.replace(
+        /override fun getPackages\(\)\s*:\s*List<ReactPackage>\s*=\s*PackageList\(this@MainApplication\)\.packages/,
+        'override fun getPackages(): List<ReactPackage> {\n        val packages = PackageList(this@MainApplication).packages\n        packages.add(FloatingBubblePackage())\n        return packages\n      }'
+      );
+    }
+    // Strategy 4: single-expression function = PackageList(this).packages
+    else if (/override fun getPackages[^=]*=\s*PackageList\(this\)\.packages/.test(src)) {
+      src = src.replace(
+        /override fun getPackages\(\)\s*:\s*List<ReactPackage>\s*=\s*PackageList\(this\)\.packages/,
+        'override fun getPackages(): List<ReactPackage> {\n        val packages = PackageList(this).packages\n        packages.add(FloatingBubblePackage())\n        return packages\n      }'
+      );
+    }
+    // Strategy 5: return PackageList(this).packages
+    else if (src.includes('return PackageList(this).packages')) {
+      src = src.replace(
+        /return PackageList\(this\)\.packages/,
+        'val packages = PackageList(this).packages\n        packages.add(FloatingBubblePackage())\n        return packages'
+      );
+    }
+    // Strategy 6: return PackageList(this@MainApplication).packages
+    else if (src.includes('return PackageList(this@MainApplication).packages')) {
+      src = src.replace(
+        /return PackageList\(this@MainApplication\)\.packages/,
+        'val packages = PackageList(this@MainApplication).packages\n        packages.add(FloatingBubblePackage())\n        return packages'
+      );
+    }
+    else {
+      console.warn('[withFloatingBubble] WARNING: could not find getPackages injection point in MainApplication.kt');
     }
 
     cfg.modResults.contents = src;
