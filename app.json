@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "taxi-impulse-mobile",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/splash.png",
       "resizeMode": "contain",
