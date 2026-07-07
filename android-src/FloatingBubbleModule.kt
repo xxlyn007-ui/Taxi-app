@@ -55,6 +55,18 @@ class FloatingBubbleModule(private val ctx: ReactApplicationContext) : ReactCont
         )
     }
 
+    /**
+     * Store auth credentials so the native FloatingBubble service can fetch
+     * orders itself when the WebView is suspended in the background.
+     * [baseUrl] — e.g. "https://taxiimpulse.ru" (no trailing slash)
+     */
+    @ReactMethod
+    fun setDriverInfo(token: String, city: String, baseUrl: String) {
+        FloatingBubbleService.driverToken  = token
+        FloatingBubbleService.driverCity   = city
+        FloatingBubbleService.apiBaseUrl   = baseUrl
+    }
+
     @ReactMethod
     fun stop() {
         ctx.stopService(Intent(ctx, FloatingBubbleService::class.java))
