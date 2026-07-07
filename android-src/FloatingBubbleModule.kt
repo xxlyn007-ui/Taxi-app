@@ -11,8 +11,8 @@ class FloatingBubbleModule(private val ctx: ReactApplicationContext) : ReactCont
     override fun getName() = "FloatingBubble"
 
     @ReactMethod
-    fun hasPermission(promise: Promise) {
-        promise.resolve(
+    fun hasPermission(callback: Callback) {
+        callback.invoke(
             Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(ctx)
         )
     }
